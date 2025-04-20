@@ -1,5 +1,5 @@
 import { Route } from '../types/apiTypes';
-import { GeneratorState, DaySchedule, HaulType } from '../types/outputTypes';
+import { GeneratorState, DaySchedule, HaulType, FlightLeg } from '../types/outputTypes';
 import { ScheduleConfiguration } from '../types/inputTypes';
 import { RouteClassifier } from '../services/routeClassifier';
 import { TimingService } from '../services/timingService';
@@ -48,91 +48,67 @@ export class DailyScheduler {
     // 1. Select haul type for the day
     const haulType = this.selectHaulType(state, config);
     
-    // 2. Choose day style (single destination or multi-leg)
-    const dayStyle = this.selectDayStyle(config);
-    
-    // 3. Select first leg
-    const firstLeg = await this.legSelector.selectLeg(
-      state,
-      config,
-      haulType,
-      routesByDeparture
-    );
-    
-    if (!firstLeg) {
-      // No suitable leg found
-      daySchedule.notes.push('No suitable routes available today');
-      return daySchedule;
+    // Check for long haul block and add note if active
+    if (state.long_haul_block_until && state.current_time < state.long_haul_block_until) {
+      daySchedule.notes.push(`Long haul block active until ${state.long_haul_block_until.toLocaleTimeString()}`);
     }
     
-    daySchedule.legs.push(firstLeg);
+    // Keep planning trips until we can't add more
+    let canPlanMoreTrips = true;
+    let tripCounter = 0;
     
-    // Update state after first leg
-    state.current_airport = firstLeg.arrival_airport;
-    state.current_time = new Date(firstLeg.arrival_time);
-    state.visited_routes.add(firstLeg.route_id);
-    this.incrementAirportVisit(state, firstLeg.arrival_airport);
-    
-    // Check for long haul block
-    if (haulType === 'long') {
-      const blockUntil = new Date(state.current_time);
-      blockUntil.setHours(
-        blockUntil.getHours() + config.minimum_rest_hours_between_long_haul
+    while (canPlanMoreTrips) {
+      tripCounter++;
+      DebugHelper.logState(`Planning trip #${tripCounter} for day ${day}`, state);
+      
+      // Make sure we're at base before planning a new trip
+      if (state.current_airport !== config.start_airport) {
+        daySchedule.notes.push(`Cannot plan more trips - not at base (at ${state.current_airport})`);
+        canPlanMoreTrips = false;
+        break;
+      }
+      
+      // Plan a trip (either A->B->A or A->B->C->A)
+      const tripResult = await this.planTrip(state, config, haulType, routesByDeparture);
+      
+      if (!tripResult.success) {
+        daySchedule.notes.push(tripResult.message);
+        canPlanMoreTrips = false;
+        break;
+      }
+      
+      // Add trip legs to the day schedule
+      daySchedule.legs.push(...tripResult.legs);
+      
+      // Check if we have time for another trip
+      const nextPossibleDepartureTime = new Date(state.current_time);
+      nextPossibleDepartureTime.setMinutes(
+        nextPossibleDepartureTime.getMinutes() + config.turnaround_time_minutes
       );
-      state.long_haul_block_until = blockUntil;
       
-      daySchedule.notes.push(`Long haul flight, rest required for ${config.minimum_rest_hours_between_long_haul} hours`);
-    }
-    
-    DebugHelper.logState(`After first leg`, state);
-    
-    // 4. Build remaining legs if needed
-    if (dayStyle === 'multi-leg' && haulType !== 'long') {
-      // For shorter flights, we can have multiple legs
-      // But for long haul, we stick to out-and-back
-      
-      const secondLeg = await this.legSelector.selectLeg(
-        state,
-        config,
-        haulType,
-        routesByDeparture
+      const hasTimeForMoreTrips = this.timingService.isWithinOperatingHours(
+        nextPossibleDepartureTime,
+        config.operating_hours
       );
       
-      if (secondLeg) {
-        daySchedule.legs.push(secondLeg);
+      if (!hasTimeForMoreTrips) {
+        daySchedule.notes.push(`No more time for additional trips today`);
+        canPlanMoreTrips = false;
+      }
+      
+      // Set long haul block if applicable
+      if (haulType === 'long') {
+        const blockUntil = new Date(state.current_time);
+        blockUntil.setHours(
+          blockUntil.getHours() + config.minimum_rest_hours_between_long_haul
+        );
+        state.long_haul_block_until = blockUntil;
         
-        // Update state
-        state.current_airport = secondLeg.arrival_airport;
-        state.current_time = new Date(secondLeg.arrival_time);
-        state.visited_routes.add(secondLeg.route_id);
-        this.incrementAirportVisit(state, secondLeg.arrival_airport);
-        
-        DebugHelper.logState(`After second leg`, state);
+        daySchedule.notes.push(`Long haul flight, rest required for ${config.minimum_rest_hours_between_long_haul} hours`);
       }
     }
     
-    // 5. Try to return to base if necessary
-    if (state.current_airport !== config.start_airport) {
-      const returnLeg = await this.returnPlanner.planReturnToBase(
-        state,
-        config,
-        routesByDeparture
-      );
-      
-      if (returnLeg) {
-        daySchedule.legs.push(returnLeg);
-        
-        // Update state
-        state.current_airport = returnLeg.arrival_airport;
-        state.current_time = new Date(returnLeg.arrival_time);
-        state.visited_routes.add(returnLeg.route_id);
-        this.incrementAirportVisit(state, returnLeg.arrival_airport);
-        
-        DebugHelper.logState(`After return leg`, state);
-      }
-    }
-    
-    // 6. Determine end-of-day status
+    // Final determination of end-of-day status
     daySchedule.overnight_location = state.current_airport;
     
     if (state.current_airport !== config.start_airport) {
@@ -151,6 +127,108 @@ export class DailyScheduler {
     }
     
     return daySchedule;
+  }
+  
+  /**
+   * Plan a single trip (either A->B->A or A->B->C->A)
+   */
+  private async planTrip(
+    state: GeneratorState,
+    config: ScheduleConfiguration,
+    haulType: HaulType,
+    routesByDeparture: Map<string, Route[]>
+  ): Promise<{ success: boolean; message: string; legs: FlightLeg[] }> {
+    const legs: FlightLeg[] = [];
+    
+    // Choose trip style (single destination or multi-leg)
+    const tripStyle = this.selectDayStyle(config);
+    DebugHelper.logState(`Trip style: ${tripStyle}`, state);
+    
+    // Select first leg
+    const firstLeg = await this.legSelector.selectLeg(
+      state,
+      config,
+      haulType,
+      routesByDeparture
+    );
+    
+    if (!firstLeg) {
+      return { 
+        success: false, 
+        message: 'No suitable routes available for first leg', 
+        legs: [] 
+      };
+    }
+    
+    legs.push(firstLeg);
+    
+    // Update state after first leg
+    state.current_airport = firstLeg.arrival_airport;
+    state.current_time = new Date(firstLeg.arrival_time);
+    state.visited_routes.add(firstLeg.route_id);
+    this.incrementAirportVisit(state, firstLeg.arrival_airport);
+    
+    DebugHelper.logState(`After first leg`, state);
+    
+    // Add second leg for multi-leg trips
+    if (tripStyle === 'multi-leg' && haulType !== 'long') {
+      // For shorter flights, we can have multiple legs
+      // But for long haul, we stick to out-and-back
+      
+      const secondLeg = await this.legSelector.selectLeg(
+        state,
+        config,
+        haulType,
+        routesByDeparture
+      );
+      
+      if (secondLeg) {
+        legs.push(secondLeg);
+        
+        // Update state
+        state.current_airport = secondLeg.arrival_airport;
+        state.current_time = new Date(secondLeg.arrival_time);
+        state.visited_routes.add(secondLeg.route_id);
+        this.incrementAirportVisit(state, secondLeg.arrival_airport);
+        
+        DebugHelper.logState(`After second leg`, state);
+      } else {
+        DebugHelper.logState(`No suitable second leg found, proceeding with direct return`, state);
+      }
+    }
+    
+    // Return to base leg
+    if (state.current_airport !== config.start_airport) {
+      const returnLeg = await this.returnPlanner.planReturnToBase(
+        state,
+        config,
+        routesByDeparture
+      );
+      
+      if (returnLeg) {
+        legs.push(returnLeg);
+        
+        // Update state
+        state.current_airport = returnLeg.arrival_airport;
+        state.current_time = new Date(returnLeg.arrival_time);
+        state.visited_routes.add(returnLeg.route_id);
+        this.incrementAirportVisit(state, returnLeg.arrival_airport);
+        
+        DebugHelper.logState(`After return leg`, state);
+      } else {
+        return { 
+          success: false, 
+          message: `Cannot return to base from ${state.current_airport}`, 
+          legs: legs 
+        };
+      }
+    }
+    
+    return {
+      success: true,
+      message: 'Trip planned successfully',
+      legs: legs
+    };
   }
   
   /**
