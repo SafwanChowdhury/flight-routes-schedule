@@ -108,7 +108,7 @@ export class LegSelector {
     config: ScheduleConfiguration
   ): Promise<Route[]> {
     // For each route, check if it can depart within operating hours
-    return routes.filter(route => {
+    return routes.filter(() => {
       // Add turnaround time to current time
       const earliestDeparture = new Date(state.current_time);
       earliestDeparture.setMinutes(

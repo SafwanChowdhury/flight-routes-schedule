@@ -1,4 +1,4 @@
-import { GeneratorState, DaySchedule, GeneratedSchedule } from '../types/outputTypes';
+import { GeneratorState, GeneratedSchedule } from '../types/outputTypes';
 
 /**
  * Helper utilities for debugging the schedule generation algorithm
@@ -71,7 +71,7 @@ export class DebugHelper {
     message: string,
     routesCount: number,
     filteredCount: number,
-    selectedRoute: any | null
+    selectedRoute: { departure_iata: string; arrival_iata: string; duration_min: number } | null
   ): void {
     if (process.env.NODE_ENV === 'development') {
       console.log(`[ROUTE SELECTION] ${message}`);

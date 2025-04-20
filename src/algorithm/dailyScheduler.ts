@@ -1,5 +1,5 @@
 import { Route } from '../types/apiTypes';
-import { GeneratorState, DaySchedule, FlightLeg, HaulType } from '../types/outputTypes';
+import { GeneratorState, DaySchedule, HaulType } from '../types/outputTypes';
 import { ScheduleConfiguration } from '../types/inputTypes';
 import { RouteClassifier } from '../services/routeClassifier';
 import { TimingService } from '../services/timingService';
@@ -169,7 +169,7 @@ export class DailyScheduler {
     // Try to select a haul type
     try {
       return pickHaulType(currentPreferences, config.haul_weighting);
-    } catch (error) {
+    } catch {
       // Fallback to short haul if no valid options
       return 'short';
     }

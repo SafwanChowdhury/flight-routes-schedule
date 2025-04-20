@@ -1,4 +1,4 @@
-import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
+import axios, { AxiosInstance } from 'axios';
 import config from '../config';
 import { 
   Route, 
@@ -83,7 +83,7 @@ class ApiClient {
     }
     
     try {
-      const params: Record<string, any> = {
+      const params: { direction: string; all: boolean; airline_id?: number; airline_name?: string } = {
         direction: 'departure',
         all: true,
       };
