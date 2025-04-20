@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { body } from 'express-validator';
 import { ScheduleConfiguration } from '../types/inputTypes';
 import { apiClient } from '../services/apiClient';
@@ -25,7 +25,7 @@ router.post('/generate', [
   body('preferred_countries').isArray().withMessage('Preferred countries must be an array'),
   body('preferred_regions').isArray().withMessage('Preferred regions must be an array'),
   body('minimum_rest_hours_between_long_haul').isInt({ min: 6, max: 24 }).withMessage('Minimum rest hours must be between 6 and 24')
-], async (req, res) => {
+], async (req: Request, res: Response) => {
   try {
     const config: ScheduleConfiguration = req.body;
     
