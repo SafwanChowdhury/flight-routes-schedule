@@ -22,6 +22,7 @@ export interface HaulWeighting {
 export interface ScheduleConfiguration {
   airline_id: number;
   airline_name: string;
+  airline_iata?: string;  // Added this field
   start_airport: string;  // IATA code
   days: number;
   haul_preferences: HaulPreferences;

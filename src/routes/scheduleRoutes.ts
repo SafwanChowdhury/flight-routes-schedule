@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, {Request, Response} from 'express';
 import { body } from 'express-validator';
 import { ScheduleConfiguration } from '../types/inputTypes';
 import { apiClient } from '../services/apiClient';
@@ -47,6 +47,19 @@ router.post('/generate', [
         message: 'Invalid configuration',
         errors: validationResult.errors
       });
+    }
+    
+    // Get airline details to retrieve the IATA code if not provided
+    if (!config.airline_iata) {
+      try {
+        const airline = await apiClient.getAirlineById(config.airline_id);
+        if (airline && airline.iata) {
+          config.airline_iata = airline.iata;
+        }
+      } catch (error) {
+        console.warn(`Could not retrieve airline IATA code for ID ${config.airline_id}:`, error);
+        // Continue without the IATA code, the filter will use airline_id as fallback
+      }
     }
     
     // Fetch routes for the airline
@@ -104,6 +117,19 @@ router.post('/validate', async (req, res) => {
         message: 'Missing required fields',
         missing_fields: missingFields
       });
+    }
+    
+    // Try to get airline IATA code if not provided
+    if (!config.airline_iata && config.airline_id) {
+      try {
+        const airline = await apiClient.getAirlineById(config.airline_id as number);
+        if (airline && airline.iata) {
+          config.airline_iata = airline.iata;
+        }
+      } catch (error) {
+        console.warn(`Could not retrieve airline IATA code for ID ${config.airline_id}:`, error);
+        // Continue without the IATA code
+      }
     }
     
     // Perform validation

@@ -35,6 +35,22 @@ export class LegSelector {
       this.routeClassifier.classifyRoute(route.duration_min) === haulType
     );
     
+    // Filter routes by airline identifier - ADDED THIS FILTER
+    filteredRoutes = filteredRoutes.filter(route => {
+      // Primary check: Match by airline IATA code
+      if (config.airline_iata && route.airline_iata === config.airline_iata) {
+        return true;
+      }
+      
+      // Secondary check: Match by airline name (case-insensitive)
+      if (config.airline_name && 
+          route.airline_name.toLowerCase() === config.airline_name.toLowerCase()) {
+        return true;
+      }
+      
+      return false;
+    });
+    
     // For return legs, filter to only those that go back to base
     if (isReturnLeg) {
       filteredRoutes = filteredRoutes.filter(route => 
@@ -143,6 +159,11 @@ export class LegSelector {
       route.duration_min
     );
     
+    // Override airline information to match the requested airline
+    // regardless of which airline operates the actual route
+    const airlineIata = config.airline_iata || route.airline_iata;
+    const airlineName = config.airline_name || route.airline_name;
+    
     return {
       departure_airport: route.departure_iata,
       arrival_airport: route.arrival_iata,
@@ -156,8 +177,8 @@ export class LegSelector {
       departure_country: route.departure_country,
       arrival_city: route.arrival_city,
       arrival_country: route.arrival_country,
-      airline_iata: route.airline_iata,
-      airline_name: route.airline_name,
+      airline_iata: airlineIata,
+      airline_name: airlineName,
       distance_km: route.distance_km
     };
   }

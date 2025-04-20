@@ -80,26 +80,11 @@ export class ReturnPlanner {
     }
     
     // Create the return leg
-    const returnLeg: FlightLeg = {
-      departure_airport: shortestRoute.departure_iata,
-      arrival_airport: shortestRoute.arrival_iata,
-      departure_time: morningTime.toISOString(),
-      arrival_time: this.timingService.calculateArrivalTime(
-        morningTime,
-        shortestRoute.duration_min
-      ).toISOString(),
-      haul_type: this.routeClassifier.classifyRoute(shortestRoute.duration_min),
-      duration_min: shortestRoute.duration_min,
-      route_id: shortestRoute.route_id,
-      // Additional metadata
-      departure_city: shortestRoute.departure_city,
-      departure_country: shortestRoute.departure_country,
-      arrival_city: shortestRoute.arrival_city,
-      arrival_country: shortestRoute.arrival_country,
-      airline_iata: shortestRoute.airline_iata,
-      airline_name: shortestRoute.airline_name,
-      distance_km: shortestRoute.distance_km
-    };
+    const returnLeg: FlightLeg = this.buildFlightLeg(
+      shortestRoute,
+      morningTime,
+      config
+    );
     
     // Create the day schedule
     const daySchedule: DaySchedule = {
@@ -139,25 +124,44 @@ export class ReturnPlanner {
     
     const { route, departureTime } = returnFlight;
     
-    // Create the return leg
+    // Create the return leg with airline override
+    return this.buildFlightLeg(route, departureTime, config);
+  }
+  
+  /**
+   * Build a flight leg with airline override
+   */
+  private buildFlightLeg(
+    route: Route,
+    departureTime: Date,
+    config: ScheduleConfiguration
+  ): FlightLeg {
+    // Calculate arrival time
+    const arrivalTime = this.timingService.calculateArrivalTime(
+      departureTime,
+      route.duration_min
+    );
+    
+    // Override airline information to match the requested airline
+    // regardless of which airline operates the actual route
+    const airlineIata = config.airline_iata || route.airline_iata;
+    const airlineName = config.airline_name || route.airline_name;
+    
     return {
       departure_airport: route.departure_iata,
       arrival_airport: route.arrival_iata,
       departure_time: departureTime.toISOString(),
-      arrival_time: this.timingService.calculateArrivalTime(
-        departureTime,
-        route.duration_min
-      ).toISOString(),
+      arrival_time: arrivalTime.toISOString(),
       haul_type: this.routeClassifier.classifyRoute(route.duration_min),
       duration_min: route.duration_min,
       route_id: route.route_id,
-      // Additional metadata
+      // Additional metadata with airline override
       departure_city: route.departure_city,
       departure_country: route.departure_country,
       arrival_city: route.arrival_city,
       arrival_country: route.arrival_country,
-      airline_iata: route.airline_iata,
-      airline_name: route.airline_name,
+      airline_iata: airlineIata,
+      airline_name: airlineName,
       distance_km: route.distance_km
     };
   }
