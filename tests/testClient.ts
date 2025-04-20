@@ -108,7 +108,8 @@ async function testScheduleGeneration() {
       turnaround_time_minutes: 45,
       preferred_countries: ['Italy', 'Spain', 'France'],
       preferred_regions: ['EU'],
-      minimum_rest_hours_between_long_haul: 8
+      minimum_rest_hours_between_long_haul: 8,
+      repetition_mode: false
     };
     
     // Validate the configuration

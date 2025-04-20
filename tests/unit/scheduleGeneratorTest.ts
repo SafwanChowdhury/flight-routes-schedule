@@ -110,7 +110,8 @@ describe('Schedule Generator Unit Tests', () => {
     turnaround_time_minutes: 45,
     preferred_countries: ['Italy', 'France'],
     preferred_regions: ['EU'],
-    minimum_rest_hours_between_long_haul: 8
+    minimum_rest_hours_between_long_haul: 8,
+    repetition_mode: false
   };
 
   test('should generate a schedule with the correct number of days', async () => {
