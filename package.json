@@ -2,9 +2,9 @@
   "name": "flight-routes-schedule",
   "version": "1.0.0",
   "description": "Flight schedule generator for flight simulation",
-  "main": "dist/server.js",
+  "main": "dist/src/server.js",
   "scripts": {
-    "start": "node dist/server.js",
+    "start": "node dist/src/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
     "test": "DEBUG_PRINT_LIMIT=100000 jest",
