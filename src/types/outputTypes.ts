@@ -48,4 +48,5 @@ export interface GeneratorState {
   long_haul_block_until: Date | null;
   generated_days: DaySchedule[];
   consecutive_days_away_from_base: number;
+  future_legs?: FlightLeg[]; // Added property to store legs for future days
 }

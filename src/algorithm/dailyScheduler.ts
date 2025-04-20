@@ -7,7 +7,7 @@ import { BiasService } from '../services/biasService';
 import { LegSelector } from './legSelector';
 import { ReturnPlanner } from './returnPlanner';
 import { pickHaulType } from '../utils/randomizationHelper';
-import { formatDate } from '../utils/dateTimeHelper';
+import { formatDate, isSameDay } from '../utils/dateTimeHelper';
 import { DebugHelper } from '../utils/debugHelper';
 
 /**
@@ -44,6 +44,9 @@ export class DailyScheduler {
     };
     
     DebugHelper.logState(`Starting day ${day}`, state);
+    
+    // Store original date to track day boundaries
+    const originalDate = new Date(state.current_date);
     
     // 1. Select haul type for the day
     const haulType = this.selectHaulType(state, config);
@@ -105,8 +108,40 @@ export class DailyScheduler {
         break;
       }
       
+      // Filter legs to only include those that belong to the current calendar day
+      const currentDayLegs: FlightLeg[] = [];
+      const futureDayLegs: FlightLeg[] = [];
+      
+      for (const leg of tripResult.legs) {
+        const legDepartureDate = new Date(leg.departure_time);
+        
+        // Only add legs that depart on the current calendar day to the current day's schedule
+        if (isSameDay(legDepartureDate, originalDate)) {
+          currentDayLegs.push(leg);
+        } else {
+          // Store legs that occur on future days to be added to next day's schedule
+          futureDayLegs.push(leg);
+        }
+      }
+      
       // Add trip legs to the day schedule
-      daySchedule.legs.push(...tripResult.legs);
+      daySchedule.legs.push(...currentDayLegs);
+      
+      // If we have future day legs, we must stop planning for the current day
+      if (futureDayLegs.length > 0) {
+        // Save the future day legs to be processed by the scheduleGenerator
+        state.future_legs = futureDayLegs;
+        canPlanMoreTrips = false;
+        daySchedule.notes.push('Calendar day boundary reached - remaining flights will be added to next day');
+        
+        // Set the overnight location to the airport where we'll be at the end of the current day's legs
+        if (currentDayLegs.length > 0) {
+          const lastLeg = currentDayLegs[currentDayLegs.length - 1];
+          daySchedule.overnight_location = lastLeg.arrival_airport;
+        }
+        
+        break;
+      }
       
       // Check if we have time for another trip
       const nextPossibleDepartureTime = new Date(state.current_time);
@@ -119,8 +154,15 @@ export class DailyScheduler {
         config.operating_hours
       );
       
-      if (!hasTimeForMoreTrips) {
-        daySchedule.notes.push(`No more time for additional trips today`);
+      // Check if we're still on the same calendar day
+      const sameCalendarDay = isSameDay(state.current_time, originalDate);
+      
+      if (!hasTimeForMoreTrips || !sameCalendarDay) {
+        if (!sameCalendarDay) {
+          daySchedule.notes.push(`Calendar day boundary reached - remaining flights will be added to next day`);
+        } else {
+          daySchedule.notes.push(`No more time for additional trips today`);
+        }
         canPlanMoreTrips = false;
       }
       
@@ -228,10 +270,13 @@ export class DailyScheduler {
     
     // Return to base leg
     if (state.current_airport !== config.start_airport) {
+      // IMPORTANT FIX: Use the same haul type for the return leg
+      // This ensures we don't mix haul types when returning to base
       const returnLeg: FlightLeg | null = await this.returnPlanner.planReturnToBase(
         state,
         config,
-        routesByDeparture
+        routesByDeparture,
+        haulType  // Pass the original haul type to ensure consistency
       );
       
       if (returnLeg) {
@@ -247,7 +292,7 @@ export class DailyScheduler {
       } else {
         return { 
           success: false, 
-          message: `Cannot return to base from ${state.current_airport}`, 
+          message: `Cannot return to base from ${state.current_airport} using ${haulType} haul flights`, 
           legs: legs 
         };
       }
@@ -378,7 +423,31 @@ export class DailyScheduler {
     try {
       return pickHaulType(currentPreferences, config.haul_weighting);
     } catch {
-      // Fallback to short haul if no valid options
+      // Fallback: If no haul type is allowed by preferences or long haul is blocked,
+      // we need to enable at least one haul type temporarily to allow return to base
+      if (!currentPreferences.short && !currentPreferences.medium && !currentPreferences.long) {
+        // Enable all haul types with preference for the originally configured ones
+        const tempPreferences = {
+          short: true,
+          medium: true,
+          long: state.long_haul_block_until ? false : true
+        };
+        
+        // Use original weightings but ensure they're not zero
+        const tempWeightings = {
+          short: Math.max(config.haul_weighting.short, 0.1),
+          medium: Math.max(config.haul_weighting.medium, 0.1),
+          long: state.long_haul_block_until ? 0 : Math.max(config.haul_weighting.long, 0.1)
+        };
+        
+        // Log that we're using fallback haul types
+        console.warn('No haul types available, using fallback preferences');
+        
+        return pickHaulType(tempPreferences, tempWeightings);
+      }
+      
+      // If we get here, something is very wrong with the configuration
+      console.error('Cannot select haul type, using short haul as last resort');
       return 'short';
     }
   }

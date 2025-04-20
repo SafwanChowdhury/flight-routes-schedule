@@ -1,5 +1,5 @@
 import { Route } from '../types/apiTypes';
-import { FlightLeg, GeneratorState, DaySchedule } from '../types/outputTypes';
+import { FlightLeg, GeneratorState, DaySchedule, HaulType } from '../types/outputTypes';
 import { ScheduleConfiguration } from '../types/inputTypes';
 import { RouteClassifier } from '../services/routeClassifier';
 import { TimingService } from '../services/timingService';
@@ -20,18 +20,28 @@ export class ReturnPlanner {
   isReturnFeasible(
     state: GeneratorState,
     config: ScheduleConfiguration,
-    routesByDeparture: Map<string, Route[]>
+    routesByDeparture: Map<string, Route[]>,
+    haulType?: HaulType
   ): boolean {
     // Already at base
     if (state.current_airport === config.start_airport) {
       return true;
     }
     
+    let availableRoutes = routesByDeparture.get(state.current_airport) || [];
+    
+    // Filter routes by haul type if specified
+    if (haulType) {
+      availableRoutes = availableRoutes.filter(route => 
+        this.routeClassifier.classifyRoute(route.duration_min) === haulType
+      );
+    }
+    
     return this.timingService.isReturnFeasible(
       state.current_time,
       state.current_airport,
       config.start_airport,
-      routesByDeparture.get(state.current_airport) || [],
+      availableRoutes,
       config
     );
   }
@@ -43,13 +53,27 @@ export class ReturnPlanner {
     state: GeneratorState,
     config: ScheduleConfiguration,
     routesByDeparture: Map<string, Route[]>,
-    dayNumber: number
+    dayNumber: number,
+    haulType?: HaulType
   ): DaySchedule | null {
     if (state.current_airport === config.start_airport) {
       return null; // Already at base
     }
     
-    const availableRoutes = routesByDeparture.get(state.current_airport) || [];
+    let availableRoutes = routesByDeparture.get(state.current_airport) || [];
+    
+    // Filter routes by haul type if specified
+    if (haulType && config.haul_preferences[haulType]) {
+      availableRoutes = availableRoutes.filter(route => 
+        this.routeClassifier.classifyRoute(route.duration_min) === haulType
+      );
+    } else {
+      // If no specific haul type is required or allowed, filter based on preferences
+      availableRoutes = availableRoutes.filter(route => {
+        const routeHaulType = this.routeClassifier.classifyRoute(route.duration_min);
+        return config.haul_preferences[routeHaulType];
+      });
+    }
     
     // Find routes that go back to base
     const routesToBase = availableRoutes.filter(
@@ -104,17 +128,45 @@ export class ReturnPlanner {
   planReturnToBase(
     state: GeneratorState,
     config: ScheduleConfiguration,
-    routesByDeparture: Map<string, Route[]>
+    routesByDeparture: Map<string, Route[]>,
+    haulType?: HaulType
   ): FlightLeg | null {
     if (state.current_airport === config.start_airport) {
       return null; // Already at base
+    }
+    
+    let availableRoutes = routesByDeparture.get(state.current_airport) || [];
+    
+    // Filter routes by haul type if specified
+    if (haulType && config.haul_preferences[haulType]) {
+      availableRoutes = availableRoutes.filter(route => 
+        this.routeClassifier.classifyRoute(route.duration_min) === haulType
+      );
+      
+      console.log(`Filtered to ${availableRoutes.length} ${haulType} haul routes for return`);
+    } else {
+      // If no specific haul type is required or allowed, filter based on preferences
+      availableRoutes = availableRoutes.filter(route => {
+        const routeHaulType = this.routeClassifier.classifyRoute(route.duration_min);
+        return config.haul_preferences[routeHaulType];
+      });
+      
+      console.log(`Filtered to ${availableRoutes.length} routes based on haul preferences for return`);
+    }
+    
+    // Find routes that go back to base
+    const routesToBase = availableRoutes.filter(route => route.arrival_iata === config.start_airport);
+    
+    if (routesToBase.length === 0) {
+      console.log(`No routes found to return to base from ${state.current_airport} with specified haul type`);
+      return null;
     }
     
     const returnFlight = this.timingService.findEarliestReturnFlight(
       state.current_time,
       state.current_airport,
       config.start_airport,
-      routesByDeparture.get(state.current_airport) || [],
+      routesToBase,
       config
     );
     

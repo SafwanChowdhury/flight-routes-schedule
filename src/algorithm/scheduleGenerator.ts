@@ -3,7 +3,8 @@ import { Route } from '../types/apiTypes';
 import { 
   GeneratorState, 
   GeneratedSchedule, 
-  DaySchedule 
+  DaySchedule,
+  FlightLeg
 } from '../types/outputTypes';
 import { ScheduleConfiguration } from '../types/inputTypes';
 import { RouteClassifier } from '../services/routeClassifier';
@@ -12,7 +13,7 @@ import { BiasService } from '../services/biasService';
 import { DailyScheduler } from './dailyScheduler';
 import { ReturnPlanner } from './returnPlanner';
 import { DebugHelper } from '../utils/debugHelper';
-import { parseTimeString, addDays } from '../utils/dateTimeHelper';
+import { parseTimeString, addDays, formatDate } from '../utils/dateTimeHelper';
 
 /**
  * Main schedule generation algorithm
@@ -68,17 +69,22 @@ export class ScheduleGenerator {
         await this.handleOvernightReturn(state, config, routesByDeparture);
       }
       
-      // Generate schedule for current day
-      const daySchedule = await this.dailyScheduler.generateDailySchedule(
-        day,
-        state,
-        config,
-        routesByDeparture
-      );
-      
-      // Update state with day's results
-      state.generated_days.push(daySchedule);
-      state.current_airport = daySchedule.overnight_location;
+      // Process any future legs from previous day first
+      if (state.future_legs && state.future_legs.length > 0) {
+        await this.processFutureLegs(state, day);
+      } else {
+        // Generate schedule for current day normally
+        const daySchedule = await this.dailyScheduler.generateDailySchedule(
+          day,
+          state,
+          config,
+          routesByDeparture
+        );
+        
+        // Update state with day's results
+        state.generated_days.push(daySchedule);
+        state.current_airport = daySchedule.overnight_location;
+      }
       
       // Advance to next day
       state.current_date = addDays(state.current_date, 1);
@@ -102,6 +108,12 @@ export class ScheduleGenerator {
       }
     }
     
+    // Process any remaining future legs
+    if (state.future_legs && state.future_legs.length > 0) {
+      const lastDay = state.generated_days.length + 1;
+      await this.processFutureLegs(state, lastDay);
+    }
+    
     // Assemble final schedule
     const schedule: GeneratedSchedule = {
       id: uuidv4(),
@@ -115,6 +127,66 @@ export class ScheduleGenerator {
     console.log(DebugHelper.visualizeSchedule(schedule));
     
     return schedule;
+  }
+  
+  /**
+   * Process any future legs that were scheduled for later days
+   */
+  private async processFutureLegs(
+    state: GeneratorState,
+    day: number
+  ): Promise<void> {
+    if (!state.future_legs || state.future_legs.length === 0) {
+      return;
+    }
+    
+    // Create a new day schedule
+    const daySchedule: DaySchedule = {
+      day,
+      date: formatDate(state.current_date),
+      legs: [],
+      overnight_location: "",
+      notes: ["Contains legs from previous day's schedule that crossed calendar day boundary"]
+    };
+    
+    // Group legs by calendar day
+    const legsByDay = new Map<string, FlightLeg[]>();
+    
+    for (const leg of state.future_legs) {
+      const departureDate = formatDate(new Date(leg.departure_time));
+      
+      if (!legsByDay.has(departureDate)) {
+        legsByDay.set(departureDate, []);
+      }
+      
+      legsByDay.get(departureDate)!.push(leg);
+    }
+    
+    // Add only legs that belong to the current calendar day
+    const currentDateString = formatDate(state.current_date);
+    const currentDayLegs = legsByDay.get(currentDateString) || [];
+    
+    // Add legs to the day schedule
+    daySchedule.legs.push(...currentDayLegs);
+    
+    // Remove processed legs from future_legs
+    state.future_legs = state.future_legs.filter(leg => {
+      const legDepartureDate = formatDate(new Date(leg.departure_time));
+      return legDepartureDate !== currentDateString;
+    });
+    
+    // Set overnight location
+    if (currentDayLegs.length > 0) {
+      const lastLeg = currentDayLegs[currentDayLegs.length - 1];
+      daySchedule.overnight_location = lastLeg.arrival_airport;
+      state.current_airport = lastLeg.arrival_airport;
+      state.current_time = new Date(lastLeg.arrival_time);
+    } else {
+      daySchedule.overnight_location = state.current_airport;
+    }
+    
+    // Update state with day's results
+    state.generated_days.push(daySchedule);
   }
   
   /**
@@ -138,7 +210,8 @@ export class ScheduleGenerator {
       ]),
       long_haul_block_until: null,
       generated_days: [],
-      consecutive_days_away_from_base: 0
+      consecutive_days_away_from_base: 0,
+      future_legs: []
     };
   }
   
