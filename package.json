@@ -4,7 +4,7 @@
   "description": "Flight schedule generator for flight simulation",
   "main": "dist/server.js",
   "scripts": {
-    "start": "npm run build && node dist/server.js",
+    "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
     "test": "DEBUG_PRINT_LIMIT=100000 jest",
@@ -12,7 +12,8 @@
     "test-client": "ts-node tests/testClient.ts",
     "test:unit": "DEBUG_PRINT_LIMIT=100000 jest tests/unit",
     "test:integration": "DEBUG_PRINT_LIMIT=100000 jest tests/integration",
-    "test:watch": "DEBUG_PRINT_LIMIT=100000 jest --watch"
+    "test:watch": "DEBUG_PRINT_LIMIT=100000 jest --watch",
+    "postinstall": "echo 'Postinstall complete. Node version:' && node -v && ls -l src"
   },
   "dependencies": {
     "axios": "^1.6.2",
