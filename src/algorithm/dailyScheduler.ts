@@ -57,6 +57,10 @@ export class DailyScheduler {
     let canPlanMoreTrips = true;
     let tripCounter = 0;
     
+    // Store first leg and return leg for repetition mode
+    let repetitionOutboundLeg: FlightLeg | null = null;
+    let repetitionReturnLeg: FlightLeg | null = null;
+    
     while (canPlanMoreTrips) {
       tripCounter++;
       DebugHelper.logState(`Planning trip #${tripCounter} for day ${day}`, state);
@@ -69,7 +73,31 @@ export class DailyScheduler {
       }
       
       // Plan a trip (either A->B->A or A->B->C->A)
-      const tripResult = await this.planTrip(state, config, haulType, routesByDeparture);
+      let tripResult;
+      
+      if (config.repetition_mode && repetitionOutboundLeg && repetitionReturnLeg) {
+        // Use the stored route but create new legs with updated times
+        tripResult = await this.planRepeatedTrip(
+          state, 
+          config, 
+          repetitionOutboundLeg, 
+          repetitionReturnLeg
+        );
+      } else {
+        // Plan a new trip
+        tripResult = await this.planTrip(state, config, haulType, routesByDeparture);
+        
+        // Store legs for repetition if in repetition mode
+        if (config.repetition_mode && tripResult.success && tripResult.legs.length >= 2) {
+          repetitionOutboundLeg = tripResult.legs[0];
+          repetitionReturnLeg = tripResult.legs[tripResult.legs.length - 1];
+          
+          // If we got more than an out-and-back trip, we'll only use the first and last legs
+          if (tripResult.legs.length > 2) {
+            daySchedule.notes.push(`Repetition mode active: Only the first destination will be used for repeated trips`);
+          }
+        }
+      }
       
       if (!tripResult.success) {
         daySchedule.notes.push(tripResult.message);
@@ -171,11 +199,12 @@ export class DailyScheduler {
     DebugHelper.logState(`After first leg`, state);
     
     // Add second leg for multi-leg trips
-    if (tripStyle === 'multi-leg' && haulType !== 'long') {
+    if (tripStyle === 'multi-leg' && haulType !== 'long' && !config.repetition_mode) {
       // For shorter flights, we can have multiple legs
       // But for long haul, we stick to out-and-back
+      // In repetition mode, we always do out-and-back
       
-      const secondLeg = await this.legSelector.selectLeg(
+      const secondLeg: FlightLeg | null = await this.legSelector.selectLeg(
         state,
         config,
         haulType,
@@ -199,7 +228,7 @@ export class DailyScheduler {
     
     // Return to base leg
     if (state.current_airport !== config.start_airport) {
-      const returnLeg = await this.returnPlanner.planReturnToBase(
+      const returnLeg: FlightLeg | null = await this.returnPlanner.planReturnToBase(
         state,
         config,
         routesByDeparture
@@ -232,6 +261,107 @@ export class DailyScheduler {
   }
   
   /**
+   * Plan a repeated trip using previously stored legs
+   */
+  private async planRepeatedTrip(
+    state: GeneratorState,
+    config: ScheduleConfiguration,
+    outboundLeg: FlightLeg,
+    returnLeg: FlightLeg
+  ): Promise<{ success: boolean; message: string; legs: FlightLeg[] }> {
+    const legs: FlightLeg[] = [];
+    
+    // Create a new outbound leg with updated times
+    const newOutboundDepartureTime = new Date(state.current_time);
+    newOutboundDepartureTime.setMinutes(
+      newOutboundDepartureTime.getMinutes() + config.turnaround_time_minutes
+    );
+    
+    // Check if within operating hours
+    if (!this.timingService.isWithinOperatingHours(
+      newOutboundDepartureTime,
+      config.operating_hours
+    )) {
+      return {
+        success: false,
+        message: 'Cannot schedule more flights today - outside operating hours',
+        legs: []
+      };
+    }
+    
+    // Calculate flight duration
+    const originalOutboundDuration = new Date(outboundLeg.arrival_time).getTime() - 
+                                     new Date(outboundLeg.departure_time).getTime();
+    
+    // Create arrival time
+    const newOutboundArrivalTime = new Date(newOutboundDepartureTime.getTime() + originalOutboundDuration);
+    
+    // Create new outbound leg
+    const newOutboundLeg: FlightLeg = {
+      ...outboundLeg,
+      departure_time: newOutboundDepartureTime.toISOString(),
+      arrival_time: newOutboundArrivalTime.toISOString(),
+    };
+    
+    legs.push(newOutboundLeg);
+    
+    // Update state after outbound leg
+    state.current_airport = newOutboundLeg.arrival_airport;
+    state.current_time = new Date(newOutboundLeg.arrival_time);
+    state.visited_routes.add(newOutboundLeg.route_id);
+    this.incrementAirportVisit(state, newOutboundLeg.arrival_airport);
+    
+    // Calculate return departure time with turnaround
+    const newReturnDepartureTime = new Date(state.current_time);
+    newReturnDepartureTime.setMinutes(
+      newReturnDepartureTime.getMinutes() + config.turnaround_time_minutes
+    );
+    
+    // Check if within operating hours
+    if (!this.timingService.isWithinOperatingHours(
+      newReturnDepartureTime,
+      config.operating_hours
+    )) {
+      // We have a problem - we flew outbound but can't return today
+      // Let's still complete the trip to maintain state consistency
+      state.current_airport = config.start_airport;
+      return {
+        success: false,
+        message: 'Cannot complete return flight - outside operating hours',
+        legs: legs
+      };
+    }
+    
+    // Calculate flight duration
+    const originalReturnDuration = new Date(returnLeg.arrival_time).getTime() - 
+                                   new Date(returnLeg.departure_time).getTime();
+    
+    // Create arrival time
+    const newReturnArrivalTime = new Date(newReturnDepartureTime.getTime() + originalReturnDuration);
+    
+    // Create new return leg
+    const newReturnLeg: FlightLeg = {
+      ...returnLeg,
+      departure_time: newReturnDepartureTime.toISOString(),
+      arrival_time: newReturnArrivalTime.toISOString(),
+    };
+    
+    legs.push(newReturnLeg);
+    
+    // Update state after return leg
+    state.current_airport = newReturnLeg.arrival_airport;
+    state.current_time = new Date(newReturnLeg.arrival_time);
+    state.visited_routes.add(newReturnLeg.route_id);
+    this.incrementAirportVisit(state, newReturnLeg.arrival_airport);
+    
+    return {
+      success: true,
+      message: 'Repeated trip planned successfully',
+      legs: legs
+    };
+  }
+  
+  /**
    * Select haul type for the day based on preferences, weightings, and restrictions
    */
   private selectHaulType(state: GeneratorState, config: ScheduleConfiguration): HaulType {
@@ -257,6 +387,11 @@ export class DailyScheduler {
    * Select day style (single destination or multi-leg)
    */
   private selectDayStyle(config: ScheduleConfiguration): 'single-destination' | 'multi-leg' {
+    // In repetition mode, always use single-destination
+    if (config.repetition_mode) {
+      return 'single-destination';
+    }
+    
     const randomValue = Math.random();
     return randomValue < config.prefer_single_leg_day_ratio ? 'single-destination' : 'multi-leg';
   }

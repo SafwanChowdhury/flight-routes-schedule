@@ -33,4 +33,5 @@ export interface ScheduleConfiguration {
   preferred_countries: string[];
   preferred_regions: string[];
   minimum_rest_hours_between_long_haul: number;
+  repetition_mode: boolean; // If true, only picks one destination for the day and repeats routes to/from it
 }
