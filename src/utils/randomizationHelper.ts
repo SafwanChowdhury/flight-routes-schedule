@@ -43,16 +43,28 @@ export function weightedRandomSelection<T>(items: { item: T; weight: number }[])
     throw new Error('Cannot select from an empty array');
   }
 
+  // Log each item's weight for debugging
+  items.forEach((item, index) => {
+    if (typeof item.item === 'object' && item.item !== null && 'arrival_iata' in item.item && 'departure_iata' in item.item) {
+      const route = item.item as unknown as Record<string, string>;
+      console.log(`[RANDOM DEBUG] Item ${index}: ${route.departure_iata} → ${route.arrival_iata}, weight: ${item.weight.toFixed(2)}`);
+    }
+  });
+
   // Calculate total weight
   const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
   
+  console.log(`[RANDOM DEBUG] Total weight: ${totalWeight.toFixed(2)}`);
+  
   // If total weight is 0, select randomly
   if (totalWeight === 0) {
+    console.log(`[RANDOM DEBUG] Total weight is 0, selecting randomly`);
     return items[Math.floor(Math.random() * items.length)].item;
   }
   
   // Generate a random value between 0 and total weight
   const randomValue = Math.random() * totalWeight;
+  console.log(`[RANDOM DEBUG] Random value: ${randomValue.toFixed(2)}`);
   
   // Find the item based on the random value
   let cumulativeWeight = 0;
@@ -60,11 +72,19 @@ export function weightedRandomSelection<T>(items: { item: T; weight: number }[])
   for (const { item, weight } of items) {
     cumulativeWeight += weight;
     if (randomValue <= cumulativeWeight) {
+      // Use type checking instead of direct property access
+      if (typeof item === 'object' && item !== null && 'arrival_iata' in item && 'departure_iata' in item) {
+        const route = item as unknown as Record<string, string>;
+        console.log(`[RANDOM DEBUG] Selected route: ${route.departure_iata} → ${route.arrival_iata} (weight: ${weight.toFixed(2)}, cumulative: ${cumulativeWeight.toFixed(2)})`);
+      } else {
+        console.log(`[RANDOM DEBUG] Selected item with weight ${weight.toFixed(2)}, cumulative: ${cumulativeWeight.toFixed(2)}`);
+      }
       return item;
     }
   }
   
   // Fallback (should never reach here but TypeScript wants a return)
+  console.log(`[RANDOM DEBUG] Fallback selection`);
   return items[0].item;
 }
 

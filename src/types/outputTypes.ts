@@ -48,4 +48,5 @@ export interface GeneratorState {
   long_haul_block_until: Date | null;
   generated_days: DaySchedule[];
   consecutive_days_away_from_base: number;
+  preferred_airports: Set<string>;  // Airports that should be repeated based on destination_repetition_bias
 }

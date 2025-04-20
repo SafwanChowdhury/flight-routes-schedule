@@ -45,6 +45,10 @@ export class DailyScheduler {
     
     DebugHelper.logState(`Starting day ${day}`, state);
     
+    // Clear preferred airports at the start of each day
+    state.preferred_airports.clear();
+    console.log(`[SCHEDULER DEBUG] Day ${day}: Cleared preferred airports`);
+    
     // 1. Select haul type for the day
     const haulType = this.selectHaulType(state, config);
     
@@ -60,6 +64,7 @@ export class DailyScheduler {
     while (canPlanMoreTrips) {
       tripCounter++;
       DebugHelper.logState(`Planning trip #${tripCounter} for day ${day}`, state);
+      console.log(`[SCHEDULER DEBUG] Day ${day}, Trip ${tripCounter}: Preferred airports: ${Array.from(state.preferred_airports).join(', ')}`);
       
       // Make sure we're at base before planning a new trip
       if (state.current_airport !== config.start_airport) {
@@ -69,7 +74,13 @@ export class DailyScheduler {
       }
       
       // Plan a trip (either A->B->A or A->B->C->A)
-      const tripResult = await this.planTrip(state, config, haulType, routesByDeparture);
+      const tripResult = await this.planTrip(
+        state,
+        config,
+        haulType,
+        routesByDeparture,
+        tripCounter === 1  // isFirstTripOfDay
+      );
       
       if (!tripResult.success) {
         daySchedule.notes.push(tripResult.message);
@@ -136,12 +147,19 @@ export class DailyScheduler {
     state: GeneratorState,
     config: ScheduleConfiguration,
     haulType: HaulType,
-    routesByDeparture: Map<string, Route[]>
+    routesByDeparture: Map<string, Route[]>,
+    isFirstTripOfDay: boolean
   ): Promise<{ success: boolean; message: string; legs: FlightLeg[] }> {
     const legs: FlightLeg[] = [];
     
     // Choose trip style (single destination or multi-leg)
-    const tripStyle = this.selectDayStyle(config);
+    // If we have destination repetition bias of 1, always use single destination
+    const tripStyle = config.destination_repetition_bias === 1 ? 
+      'single-destination' : 
+      this.selectDayStyle(config);
+    
+    console.log(`[PLANTRIP DEBUG] Trip style: ${tripStyle}, First trip of day: ${isFirstTripOfDay}, Repetition bias: ${config.destination_repetition_bias}`);
+    
     DebugHelper.logState(`Trip style: ${tripStyle}`, state);
     
     // Select first leg
@@ -149,7 +167,9 @@ export class DailyScheduler {
       state,
       config,
       haulType,
-      routesByDeparture
+      routesByDeparture,
+      false,  // not a return leg
+      isFirstTripOfDay
     );
     
     if (!firstLeg) {
@@ -168,6 +188,13 @@ export class DailyScheduler {
     state.visited_routes.add(firstLeg.route_id);
     this.incrementAirportVisit(state, firstLeg.arrival_airport);
     
+    // If this is the first trip of the day and we have destination repetition bias,
+    // add the destination to preferred airports
+    if (isFirstTripOfDay && config.destination_repetition_bias > 0) {
+      state.preferred_airports.add(firstLeg.arrival_airport);
+      console.log(`[PLANTRIP DEBUG] Added ${firstLeg.arrival_airport} to preferred airports. Preferred airports now: ${Array.from(state.preferred_airports).join(', ')}`);
+    }
+    
     DebugHelper.logState(`After first leg`, state);
     
     // Add second leg for multi-leg trips
@@ -179,7 +206,8 @@ export class DailyScheduler {
         state,
         config,
         haulType,
-        routesByDeparture
+        routesByDeparture,
+        false  // not a return leg
       );
       
       if (secondLeg) {

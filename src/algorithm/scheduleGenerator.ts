@@ -138,7 +138,8 @@ export class ScheduleGenerator {
       ]),
       long_haul_block_until: null,
       generated_days: [],
-      consecutive_days_away_from_base: 0
+      consecutive_days_away_from_base: 0,
+      preferred_airports: new Set<string>()
     };
   }
   

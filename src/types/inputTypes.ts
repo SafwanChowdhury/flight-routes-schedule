@@ -33,4 +33,11 @@ export interface ScheduleConfiguration {
   preferred_countries: string[];
   preferred_regions: string[];
   minimum_rest_hours_between_long_haul: number;
+  /**
+   * Controls the repetition of destinations in the schedule.
+   * - 0.0: No repetition bias, all destinations selected independently
+   * - 0.0-1.0: Partial bias, preferred destinations get a boost based on the value
+   * - 1.0: Strong bias, only the initially selected destination will be used for the day
+   */
+  destination_repetition_bias: number;  // 0.0 to 1.0
 }

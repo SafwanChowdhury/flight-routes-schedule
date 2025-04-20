@@ -14,6 +14,10 @@ export class DebugHelper {
       console.log(`  Current time: ${state.current_time.toISOString()}`);
       console.log(`  Visited airports: ${Array.from(state.visited_airports.entries()).map(([k, v]) => `${k}(${v})`).join(', ')}`);
       
+      if (state.preferred_airports.size > 0) {
+        console.log(`  Preferred airports: ${Array.from(state.preferred_airports).join(', ')}`);
+      }
+      
       if (state.long_haul_block_until) {
         console.log(`  Long haul block until: ${state.long_haul_block_until.toISOString()}`);
       }

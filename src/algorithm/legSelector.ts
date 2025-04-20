@@ -25,8 +25,12 @@ export class LegSelector {
     config: ScheduleConfiguration,
     haulType: HaulType,
     routesByDeparture: Map<string, Route[]>,
-    isReturnLeg: boolean = false
+    isReturnLeg: boolean = false,
+    isFirstLegOfDay: boolean = false
   ): Promise<FlightLeg | null> {
+    console.log(`[LEG_SELECTOR DEBUG] Selecting leg from ${state.current_airport}, isFirstLegOfDay: ${isFirstLegOfDay}, isReturnLeg: ${isReturnLeg}`);
+    console.log(`[LEG_SELECTOR DEBUG] Current preferred airports: ${Array.from(state.preferred_airports).join(', ')}`);
+    
     // Get routes from current airport
     const availableRoutes = routesByDeparture.get(state.current_airport) || [];
     
@@ -35,7 +39,7 @@ export class LegSelector {
       this.routeClassifier.classifyRoute(route.duration_min) === haulType
     );
     
-    // Filter routes by airline identifier - ADDED THIS FILTER
+    // Filter routes by airline identifier
     filteredRoutes = filteredRoutes.filter(route => {
       // Primary check: Match by airline IATA code
       if (config.airline_iata && route.airline_iata === config.airline_iata) {
@@ -71,6 +75,7 @@ export class LegSelector {
     );
     
     if (filteredRoutes.length === 0) {
+      console.log(`[LEG_SELECTOR DEBUG] No routes available after filtering`);
       return null;
     }
     
@@ -78,7 +83,8 @@ export class LegSelector {
     const biasedRoutes = this.biasService.applyBiasing(
       filteredRoutes,
       config,
-      state.visited_airports
+      state.visited_airports,
+      state.preferred_airports
     );
     
     // Calculate valid departure windows
@@ -89,6 +95,7 @@ export class LegSelector {
     );
     
     if (validRoutes.length === 0) {
+      console.log(`[LEG_SELECTOR DEBUG] No valid routes after calculating departure windows`);
       return null;
     }
     
@@ -100,9 +107,39 @@ export class LegSelector {
         weight: biasedRoute ? biasedRoute.weight : 1.0
       };
     });
+
+    console.log(`[LEG_SELECTOR DEBUG] Valid biased routes: ${validBiasedRoutes.length}`);
     
     // Select route using weighted random selection
-    const selectedRoute = weightedRandomSelection(validBiasedRoutes);
+    // If we have a destination repetition bias of 1, use strict mode
+    const strictMode = config.destination_repetition_bias === 1;
+    const preferredDestinations = Array.from(state.preferred_airports);
+    
+    console.log(`[LEG_SELECTOR DEBUG] Using weighted selection with strictMode: ${strictMode}, preferredDestinations: ${preferredDestinations.join(', ')}`);
+    
+    // Check if we need to apply strict mode fallback
+    // In strict mode with preferred destinations but no valid preferred routes available,
+    // we need to reset all weights to allow selection from any route
+    const hasPreferredRoute = strictMode && preferredDestinations.length > 0 && 
+      validBiasedRoutes.some(item => {
+        const route = item.item;
+        return preferredDestinations.includes(route.arrival_iata);
+      });
+      
+    if (strictMode && preferredDestinations.length > 0 && !hasPreferredRoute) {
+      console.log(`[LEG_SELECTOR DEBUG] No routes to preferred destinations available, resetting weights`);
+      // Reset all weights to 1.0 to allow selection from any route
+      validBiasedRoutes.forEach(item => {
+        item.weight = 1.0;
+        console.log(`[LEG_SELECTOR DEBUG] Reset weight for ${item.item.departure_iata} → ${item.item.arrival_iata}`);
+      });
+    }
+    
+    const selectedRoute = weightedRandomSelection(
+      validBiasedRoutes
+    );
+    
+    console.log(`[LEG_SELECTOR DEBUG] Selected route: ${selectedRoute.departure_iata} → ${selectedRoute.arrival_iata}`);
     
     DebugHelper.logRouteSelection(
       `Selected route`,
@@ -110,6 +147,13 @@ export class LegSelector {
       validBiasedRoutes.length,
       selectedRoute
     );
+    
+    // If this is the first leg of the day and we have a destination repetition bias,
+    // add the selected destination to preferred airports
+    if (isFirstLegOfDay && config.destination_repetition_bias > 0) {
+      state.preferred_airports.add(selectedRoute.arrival_iata);
+      console.log(`[LEG_SELECTOR DEBUG] Added ${selectedRoute.arrival_iata} to preferred airports`);
+    }
     
     // Build flight leg from selected route
     return this.buildFlightLeg(selectedRoute, state, config);

@@ -73,6 +73,11 @@ export function validateConfiguration(
     errors.push(`Invalid operating hours format: ${(error as Error).message}`);
   }
   
+  // Check destination repetition bias
+  if (config.destination_repetition_bias < 0 || config.destination_repetition_bias > 1) {
+    errors.push('Destination repetition bias must be between 0 and 1');
+  }
+  
   // Check turnaround time
   if (config.turnaround_time_minutes < 30 || config.turnaround_time_minutes > 180) {
     errors.push('Turnaround time must be between 30 and 180 minutes');
